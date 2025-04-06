@@ -1,0 +1,183 @@
+{
+  "Comment": "NPP Payment Processing Workflow",
+  "StartAt": "ValidatePaymentDetails",
+  "States": {
+    "ValidatePaymentDetails": {
+      "Type": "Task",
+      "Resource": "${ValidatePaymentDetailsLambdaArn}",
+      "Next": "ValidateBSB",
+      "Catch": [
+        {
+          "ErrorEquals": ["ValidationError"],
+          "ResultPath": "$.error",
+          "Next": "HandlePaymentError"
+        }
+      ]
+    },
+    "ValidateBSB": {
+      "Type": "Task",
+      "Resource": "${BSBLookupLambdaArn}",
+      "Parameters": {
+        "bsbCode.$": "$.paymentDetails.destinationAccount.bsb"
+      },
+      "ResultPath": "$.bsbValidation",
+      "Next": "CheckBSBValidation",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["BSBValidationError"],
+          "ResultPath": "$.error",
+          "Next": "HandlePaymentError"
+        }
+      ]
+    },
+    "CheckBSBValidation": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.bsbValidation.isValid",
+          "BooleanEquals": true,
+          "Next": "InitiateNPPPayment"
+        }
+      ],
+      "Default": "HandlePaymentError"
+    },
+    "InitiateNPPPayment": {
+      "Type": "Task",
+      "Resource": "${NPPCreatePaymentLambdaArn}",
+      "Parameters": {
+        "sourceAccount.$": "$.paymentDetails.sourceAccount",
+        "destinationAccount.$": "$.paymentDetails.destinationAccount",
+        "amount.$": "$.paymentDetails.amount",
+        "currency.$": "$.paymentDetails.currency",
+        "description.$": "$.paymentDetails.description",
+        "endToEndId.$": "$.paymentDetails.endToEndId",
+        "paymentReference.$": "$.paymentDetails.paymentReference"
+      },
+      "ResultPath": "$.nppPayment",
+      "Next": "WaitForPaymentProcessing",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["NPPPaymentError"],
+          "ResultPath": "$.error",
+          "Next": "HandlePaymentError"
+        }
+      ]
+    },
+    "WaitForPaymentProcessing": {
+      "Type": "Wait",
+      "Seconds": 5,
+      "Next": "CheckPaymentStatus"
+    },
+    "CheckPaymentStatus": {
+      "Type": "Task",
+      "Resource": "${NPPGetPaymentStatusLambdaArn}",
+      "Parameters": {
+        "paymentId.$": "$.nppPayment.paymentId"
+      },
+      "ResultPath": "$.paymentStatus",
+      "Next": "EvaluatePaymentStatus",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ]
+    },
+    "EvaluatePaymentStatus": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.paymentStatus.status",
+          "StringEquals": "COMPLETED",
+          "Next": "RecordSuccessfulPayment"
+        },
+        {
+          "Variable": "$.paymentStatus.status",
+          "StringEquals": "PROCESSING",
+          "Next": "WaitForPaymentProcessing"
+        },
+        {
+          "Variable": "$.paymentStatus.status",
+          "StringEquals": "PENDING",
+          "Next": "WaitForPaymentProcessing"
+        }
+      ],
+      "Default": "HandlePaymentError"
+    },
+    "RecordSuccessfulPayment": {
+      "Type": "Task",
+      "Resource": "${RecordPaymentLambdaArn}",
+      "Parameters": {
+        "paymentId.$": "$.nppPayment.paymentId",
+        "paymentDetails.$": "$.paymentDetails",
+        "paymentStatus.$": "$.paymentStatus",
+        "timestamp.$": "$$.Execution.StartTime"
+      },
+      "ResultPath": "$.recordResult",
+      "Next": "NotifyPaymentSuccess",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ]
+    },
+    "NotifyPaymentSuccess": {
+      "Type": "Task",
+      "Resource": "${NotifyPaymentSuccessLambdaArn}",
+      "Parameters": {
+        "paymentId.$": "$.nppPayment.paymentId",
+        "recipientEmail.$": "$.paymentDetails.notificationEmail",
+        "amount.$": "$.paymentDetails.amount",
+        "currency.$": "$.paymentDetails.currency",
+        "destinationAccount.$": "$.paymentDetails.destinationAccount",
+        "description.$": "$.paymentDetails.description"
+      },
+      "End": true
+    },
+    "HandlePaymentError": {
+      "Type": "Task",
+      "Resource": "${HandlePaymentErrorLambdaArn}",
+      "Parameters": {
+        "error.$": "$.error",
+        "paymentDetails.$": "$.paymentDetails",
+        "timestamp.$": "$$.Execution.StartTime"
+      },
+      "ResultPath": "$.errorHandling",
+      "Next": "NotifyPaymentFailure"
+    },
+    "NotifyPaymentFailure": {
+      "Type": "Task",
+      "Resource": "${NotifyPaymentFailureLambdaArn}",
+      "Parameters": {
+        "error.$": "$.error",
+        "recipientEmail.$": "$.paymentDetails.notificationEmail",
+        "amount.$": "$.paymentDetails.amount",
+        "currency.$": "$.paymentDetails.currency",
+        "destinationAccount.$": "$.paymentDetails.destinationAccount",
+        "description.$": "$.paymentDetails.description"
+      },
+      "End": true
+    }
+  }
+}
