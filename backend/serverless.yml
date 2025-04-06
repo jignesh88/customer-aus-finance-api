@@ -1,0 +1,228 @@
+service: australian-financial-api-demo
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: ap-southeast-2  # Sydney region for Australian services
+  stage: ${opt:stage, 'dev'}
+  environment:
+    STAGE: ${self:provider.stage}
+    CDR_API_URL: ${param:cdrApiUrl}
+    CDR_CLIENT_ID: ${param:cdrClientId}
+    CDR_CLIENT_SECRET: ${param:cdrClientSecret}
+    NPP_API_URL: ${param:nppApiUrl}
+    NPP_API_KEY: ${param:nppApiKey}
+    BSB_LOOKUP_API_URL: ${param:bsbLookupApiUrl}
+    BSB_LOOKUP_API_KEY: ${param:bsbLookupApiKey}
+    YODLEE_API_URL: ${param:yodleeApiUrl}
+    YODLEE_CLIENT_ID: ${param:yodleeClientId}
+    YODLEE_CLIENT_SECRET: ${param:yodleeClientSecret}
+    ILLION_API_URL: ${param:illionApiUrl}
+    ILLION_API_KEY: ${param:illionApiKey}
+    BASIQ_API_URL: ${param:basiqApiUrl}
+    BASIQ_API_KEY: ${param:basiqApiKey}
+    SWIFT_API_URL: ${param:swiftApiUrl}
+    SWIFT_API_KEY: ${param:swiftApiKey}
+  iamRoleStatements:
+    - Effect: 'Allow'
+      Action:
+        - 'dynamodb:*'
+      Resource: !GetAtt FinancialDataTable.Arn
+    - Effect: 'Allow'
+      Action:
+        - 's3:*'
+      Resource: !GetAtt FinancialDataBucket.Arn
+    - Effect: 'Allow'
+      Action:
+        - 'states:StartExecution'
+        - 'states:DescribeExecution'
+      Resource: '*'
+
+functions:
+  # Authentication
+  auth:
+    handler: functions/auth/handler.authenticate
+    events:
+      - http:
+          path: /auth
+          method: post
+          cors: true
+
+  # CDR API Integration
+  cdrGetAccounts:
+    handler: functions/cdr/handler.getAccounts
+    events:
+      - http:
+          path: /cdr/accounts
+          method: get
+          cors: true
+          authorizer: auth
+
+  cdrGetTransactions:
+    handler: functions/cdr/handler.getTransactions
+    events:
+      - http:
+          path: /cdr/accounts/{accountId}/transactions
+          method: get
+          cors: true
+          authorizer: auth
+
+  # NPP API Integration
+  nppCreatePayment:
+    handler: functions/npp/handler.createPayment
+    events:
+      - http:
+          path: /npp/payments
+          method: post
+          cors: true
+          authorizer: auth
+
+  nppGetPaymentStatus:
+    handler: functions/npp/handler.getPaymentStatus
+    events:
+      - http:
+          path: /npp/payments/{paymentId}
+          method: get
+          cors: true
+          authorizer: auth
+
+  # BSB Lookup
+  bsbLookup:
+    handler: functions/bsb/handler.lookup
+    events:
+      - http:
+          path: /bsb/{bsbCode}
+          method: get
+          cors: true
+
+  # Yodlee Integration
+  yodleeConnect:
+    handler: functions/yodlee/handler.connect
+    events:
+      - http:
+          path: /yodlee/connect
+          method: post
+          cors: true
+          authorizer: auth
+
+  yodleeGetAccounts:
+    handler: functions/yodlee/handler.getAccounts
+    events:
+      - http:
+          path: /yodlee/accounts
+          method: get
+          cors: true
+          authorizer: auth
+
+  # Illion BankStatements
+  illionInitiateBankStatements:
+    handler: functions/illion/handler.initiate
+    events:
+      - http:
+          path: /illion/bankstatements
+          method: post
+          cors: true
+          authorizer: auth
+
+  illionGetBankStatements:
+    handler: functions/illion/handler.getBankStatements
+    events:
+      - http:
+          path: /illion/bankstatements/{requestId}
+          method: get
+          cors: true
+          authorizer: auth
+
+  # Basiq API Integration
+  basiqConnect:
+    handler: functions/basiq/handler.connect
+    events:
+      - http:
+          path: /basiq/connect
+          method: post
+          cors: true
+          authorizer: auth
+
+  basiqGetTransactions:
+    handler: functions/basiq/handler.getTransactions
+    events:
+      - http:
+          path: /basiq/accounts/{accountId}/transactions
+          method: get
+          cors: true
+          authorizer: auth
+
+  # SWIFT API Integration
+  swiftInitiateTransfer:
+    handler: functions/swift/handler.initiateTransfer
+    events:
+      - http:
+          path: /swift/transfers
+          method: post
+          cors: true
+          authorizer: auth
+
+  swiftGetTransferStatus:
+    handler: functions/swift/handler.getTransferStatus
+    events:
+      - http:
+          path: /swift/transfers/{transferId}
+          method: get
+          cors: true
+          authorizer: auth
+
+stepFunctions:
+  stateMachines:
+    accountOpeningWorkflow:
+      name: account-opening-workflow-${self:provider.stage}
+      definition: ${file(./step-functions/account-opening/definition.json)}
+    
+    paymentProcessingWorkflow:
+      name: payment-processing-workflow-${self:provider.stage}
+      definition: ${file(./step-functions/payment-processing/definition.json)}
+    
+    dataAggregationWorkflow:
+      name: data-aggregation-workflow-${self:provider.stage}
+      definition: ${file(./step-functions/data-aggregation/definition.json)}
+    
+    loanApplicationWorkflow:
+      name: loan-application-workflow-${self:provider.stage}
+      definition: ${file(./step-functions/loan-application/definition.json)}
+
+resources:
+  Resources:
+    FinancialDataTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: financial-data-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+    
+    FinancialDataBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: financial-data-${self:provider.stage}-${aws:accountId}
+        VersioningConfiguration:
+          Status: Enabled
+        ServerSideEncryptionConfiguration:
+          ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+
+plugins:
+  - serverless-step-functions
+  - serverless-iam-roles-per-function
+  - serverless-dotenv-plugin
+  - serverless-offline
