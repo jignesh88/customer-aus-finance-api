@@ -1,0 +1,46 @@
+graph TB
+    subgraph "Client Side"
+        A[NextJS Frontend] --> B[API Gateway]
+    end
+    
+    subgraph "API Gateway Layer"
+        B --> C[Authentication Lambda]
+        B --> D[API Router]
+    end
+    
+    subgraph "Business Logic Layer"
+        D --> E[CDR API Service]
+        D --> F[NPP API Service]
+        D --> G[BSB Lookup Service]
+        D --> H[Yodlee Integration]
+        D --> I[Illion BankStatements]
+        D --> J[Basiq API Service]
+        D --> K[SWIFT API Service]
+    end
+    
+    subgraph "AWS Step Functions"
+        L[Account Opening Flow]
+        M[Payment Processing Flow]
+        N[Financial Data Aggregation]
+        O[Loan Application Process]
+    end
+    
+    E --> L
+    F --> M
+    G --> L
+    G --> M
+    H --> N
+    I --> O
+    J --> N
+    K --> M
+    
+    subgraph "Data Storage"
+        P[(DynamoDB)]
+        Q[(S3 Bucket)]
+    end
+    
+    L --> P
+    M --> P
+    N --> Q
+    O --> P
+    O --> Q
