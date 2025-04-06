@@ -1,0 +1,306 @@
+{
+  "Comment": "Account Opening Workflow",
+  "StartAt": "ValidateCustomerIdentity",
+  "States": {
+    "ValidateCustomerIdentity": {
+      "Type": "Task",
+      "Resource": "${ValidateCustomerIdentityLambdaArn}",
+      "Next": "CheckIdentityValidation",
+      "Catch": [
+        {
+          "ErrorEquals": ["ValidationError"],
+          "ResultPath": "$.error",
+          "Next": "HandleOnboardingError"
+        }
+      ]
+    },
+    "CheckIdentityValidation": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.identityValidation.isValid",
+          "BooleanEquals": true,
+          "Next": "CollectBankingDetails"
+        }
+      ],
+      "Default": "HandleOnboardingError"
+    },
+    "CollectBankingDetails": {
+      "Type": "Task",
+      "Resource": "${CollectBankingDetailsLambdaArn}",
+      "Next": "ValidateBankingDetails",
+      "Catch": [
+        {
+          "ErrorEquals": ["ValidationError"],
+          "ResultPath": "$.error",
+          "Next": "HandleOnboardingError"
+        }
+      ]
+    },
+    "ValidateBankingDetails": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "ValidateBSB",
+          "States": {
+            "ValidateBSB": {
+              "Type": "Task",
+              "Resource": "${BSBLookupLambdaArn}",
+              "Parameters": {
+                "bsbCode.$": "$.bankingDetails.bsb"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "ValidateAccountNumber",
+          "States": {
+            "ValidateAccountNumber": {
+              "Type": "Task",
+              "Resource": "${ValidateAccountNumberLambdaArn}",
+              "Parameters": {
+                "accountNumber.$": "$.bankingDetails.accountNumber"
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.validationResults",
+      "Next": "PerformCDRCheck",
+      "Catch": [
+        {
+          "ErrorEquals": ["ValidationError"],
+          "ResultPath": "$.error",
+          "Next": "HandleOnboardingError"
+        }
+      ]
+    },
+    "PerformCDRCheck": {
+      "Type": "Task",
+      "Resource": "${PerformCDRCheckLambdaArn}",
+      "Parameters": {
+        "customerId.$": "$.customerId",
+        "consentToken.$": "$.consentToken"
+      },
+      "ResultPath": "$.cdrCheck",
+      "Next": "EvaluateCDRResults",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["CDRCheckError"],
+          "ResultPath": "$.error",
+          "Next": "HandleOnboardingError"
+        }
+      ]
+    },
+    "EvaluateCDRResults": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.cdrCheck.status",
+          "StringEquals": "APPROVED",
+          "Next": "PerformAMLCheck"
+        },
+        {
+          "Variable": "$.cdrCheck.status",
+          "StringEquals": "MANUAL_REVIEW",
+          "Next": "InitiateManualReview"
+        }
+      ],
+      "Default": "HandleOnboardingError"
+    },
+    "PerformAMLCheck": {
+      "Type": "Task",
+      "Resource": "${PerformAMLCheckLambdaArn}",
+      "Parameters": {
+        "customerId.$": "$.customerId",
+        "customerData.$": "$.customerData"
+      },
+      "ResultPath": "$.amlCheck",
+      "Next": "EvaluateAMLResults",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["AMLCheckError"],
+          "ResultPath": "$.error",
+          "Next": "HandleOnboardingError"
+        }
+      ]
+    },
+    "EvaluateAMLResults": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.amlCheck.status",
+          "StringEquals": "APPROVED",
+          "Next": "CreateBankAccount"
+        },
+        {
+          "Variable": "$.amlCheck.status",
+          "StringEquals": "MANUAL_REVIEW",
+          "Next": "InitiateManualReview"
+        }
+      ],
+      "Default": "HandleOnboardingError"
+    },
+    "CreateBankAccount": {
+      "Type": "Task",
+      "Resource": "${CreateBankAccountLambdaArn}",
+      "Parameters": {
+        "customerId.$": "$.customerId",
+        "customerData.$": "$.customerData",
+        "accountType.$": "$.accountType",
+        "initialDeposit.$": "$.initialDeposit"
+      },
+      "ResultPath": "$.accountCreation",
+      "Next": "SendWelcomePackage",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["AccountCreationError"],
+          "ResultPath": "$.error",
+          "Next": "HandleOnboardingError"
+        }
+      ]
+    },
+    "SendWelcomePackage": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "SendEmailConfirmation",
+          "States": {
+            "SendEmailConfirmation": {
+              "Type": "Task",
+              "Resource": "${SendEmailConfirmationLambdaArn}",
+              "Parameters": {
+                "customerId.$": "$.customerId",
+                "customerEmail.$": "$.customerData.email",
+                "accountNumber.$": "$.accountCreation.accountNumber"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "DispatchPhysicalWelcomePack",
+          "States": {
+            "DispatchPhysicalWelcomePack": {
+              "Type": "Task",
+              "Resource": "${DispatchPhysicalWelcomePackLambdaArn}",
+              "Parameters": {
+                "customerId.$": "$.customerId",
+                "customerAddress.$": "$.customerData.address",
+                "accountNumber.$": "$.accountCreation.accountNumber"
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "Next": "SetupOnlineAccess",
+      "Catch": [
+        {
+          "ErrorEquals": ["WelcomePackError"],
+          "ResultPath": "$.error",
+          "Next": "ContinueWithErrors"
+        }
+      ]
+    },
+    "SetupOnlineAccess": {
+      "Type": "Task",
+      "Resource": "${SetupOnlineAccessLambdaArn}",
+      "Parameters": {
+        "customerId.$": "$.customerId",
+        "customerEmail.$": "$.customerData.email",
+        "accountNumber.$": "$.accountCreation.accountNumber"
+      },
+      "ResultPath": "$.onlineAccess",
+      "Next": "RecordSuccessfulOnboarding",
+      "Catch": [
+        {
+          "ErrorEquals": ["OnlineAccessError"],
+          "ResultPath": "$.error",
+          "Next": "ContinueWithErrors"
+        }
+      ]
+    },
+    "RecordSuccessfulOnboarding": {
+      "Type": "Task",
+      "Resource": "${RecordSuccessfulOnboardingLambdaArn}",
+      "Parameters": {
+        "customerId.$": "$.customerId",
+        "accountNumber.$": "$.accountCreation.accountNumber",
+        "timestamp.$": "$$.Execution.StartTime"
+      },
+      "End": true
+    },
+    "InitiateManualReview": {
+      "Type": "Task",
+      "Resource": "${InitiateManualReviewLambdaArn}",
+      "Parameters": {
+        "customerId.$": "$.customerId",
+        "customerData.$": "$.customerData",
+        "cdrCheck.$": "$.cdrCheck",
+        "amlCheck.$": "$.amlCheck",
+        "identityValidation.$": "$.identityValidation",
+        "validationResults.$": "$.validationResults",
+        "timestamp.$": "$$.Execution.StartTime"
+      },
+      "End": true
+    },
+    "HandleOnboardingError": {
+      "Type": "Task",
+      "Resource": "${HandleOnboardingErrorLambdaArn}",
+      "Parameters": {
+        "error.$": "$.error",
+        "customerId.$": "$.customerId",
+        "customerData.$": "$.customerData",
+        "timestamp.$": "$$.Execution.StartTime"
+      },
+      "Next": "NotifyCustomerAboutError"
+    },
+    "NotifyCustomerAboutError": {
+      "Type": "Task",
+      "Resource": "${NotifyCustomerAboutErrorLambdaArn}",
+      "Parameters": {
+        "error.$": "$.error",
+        "customerEmail.$": "$.customerData.email",
+        "customerPhone.$": "$.customerData.phone"
+      },
+      "End": true
+    },
+    "ContinueWithErrors": {
+      "Type": "Task",
+      "Resource": "${LogNonCriticalErrorLambdaArn}",
+      "Parameters": {
+        "error.$": "$.error",
+        "customerId.$": "$.customerId",
+        "timestamp.$": "$$.Execution.StartTime"
+      },
+      "Next": "RecordSuccessfulOnboarding"
+    }
+  }
+}
