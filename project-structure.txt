@@ -1,0 +1,33 @@
+australian-financial-api-demo/
+├── frontend/                     # NextJS Frontend
+│   ├── public/
+│   ├── src/
+│   │   ├── app/                  # App Router
+│   │   ├── components/           # Reusable UI components
+│   │   ├── hooks/                # Custom React hooks
+│   │   ├── services/             # API service clients
+│   │   └── types/                # TypeScript type definitions
+│   ├── package.json
+│   └── next.config.js
+├── backend/
+│   ├── serverless.yml           # Serverless framework config
+│   ├── common/                  # Shared utilities and types
+│   │   ├── utils/
+│   │   └── types/
+│   ├── functions/               # Lambda functions
+│   │   ├── auth/                # Authentication handlers
+│   │   ├── cdr/                 # Consumer Data Right API integration
+│   │   ├── npp/                 # New Payments Platform integration
+│   │   ├── bsb/                 # BSB lookup services
+│   │   ├── yodlee/              # Yodlee API integration
+│   │   ├── illion/              # Illion BankStatements integration
+│   │   ├── basiq/               # Basiq API integration
+│   │   └── swift/              # SWIFT API integration
+│   └── step-functions/          # AWS Step Functions definitions
+│       ├── account-opening/     # Account opening workflow
+│       ├── payment-processing/  # Payment processing workflow
+│       ├── data-aggregation/    # Financial data aggregation workflow
+│       └── loan-application/    # Loan application workflow
+└── infrastructure/              # IaC with AWS CDK or CloudFormation
+    ├── lib/
+    └── bin/
