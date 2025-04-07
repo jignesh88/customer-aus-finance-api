@@ -1,0 +1,359 @@
+{
+  "Comment": "Financial Data Aggregation Workflow",
+  "StartAt": "InitiateDataCollection",
+  "States": {
+    "InitiateDataCollection": {
+      "Type": "Task",
+      "Resource": "${InitiateDataCollectionLambdaArn}",
+      "Next": "DetermineDatasources",
+      "Catch": [
+        {
+          "ErrorEquals": ["InitiationError"],
+          "ResultPath": "$.error",
+          "Next": "HandleAggregationError"
+        }
+      ]
+    },
+    "DetermineDatasources": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.datasources.cdr",
+          "BooleanEquals": true,
+          "Next": "FetchCDRData"
+        },
+        {
+          "Variable": "$.datasources.basiq",
+          "BooleanEquals": true,
+          "Next": "FetchBasiqData"
+        },
+        {
+          "Variable": "$.datasources.yodlee",
+          "BooleanEquals": true,
+          "Next": "FetchYodleeData"
+        },
+        {
+          "Variable": "$.datasources.illion",
+          "BooleanEquals": true,
+          "Next": "FetchIllionData"
+        }
+      ],
+      "Default": "NoDatasources"
+    },
+    "NoDatasources": {
+      "Type": "Fail",
+      "Error": "NoDatasourcesError",
+      "Cause": "No valid datasources selected for data aggregation"
+    },
+    "FetchCDRData": {
+      "Type": "Task",
+      "Resource": "${FetchCDRDataLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId",
+        "consentId.$": "$.consentId"
+      },
+      "ResultPath": "$.cdrData",
+      "Next": "CheckForMoreDatasources",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["CDRFetchError"],
+          "ResultPath": "$.error.cdr",
+          "Next": "CheckForMoreDatasources"
+        }
+      ]
+    },
+    "FetchBasiqData": {
+      "Type": "Task",
+      "Resource": "${FetchBasiqDataLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId",
+        "connectionId.$": "$.connectionId"
+      },
+      "ResultPath": "$.basiqData",
+      "Next": "CheckForMoreDatasources",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["BasiqFetchError"],
+          "ResultPath": "$.error.basiq",
+          "Next": "CheckForMoreDatasources"
+        }
+      ]
+    },
+    "FetchYodleeData": {
+      "Type": "Task",
+      "Resource": "${FetchYodleeDataLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId"
+      },
+      "ResultPath": "$.yodleeData",
+      "Next": "CheckForMoreDatasources",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["YodleeFetchError"],
+          "ResultPath": "$.error.yodlee",
+          "Next": "CheckForMoreDatasources"
+        }
+      ]
+    },
+    "FetchIllionData": {
+      "Type": "Task",
+      "Resource": "${FetchIllionDataLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId",
+        "requestId.$": "$.requestId"
+      },
+      "ResultPath": "$.illionData",
+      "Next": "CheckForMoreDatasources",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["IllionFetchError"],
+          "ResultPath": "$.error.illion",
+          "Next": "CheckForMoreDatasources"
+        }
+      ]
+    },
+    "CheckForMoreDatasources": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.datasources.cdr",
+              "BooleanEquals": true
+            },
+            {
+              "Not": {
+                "Variable": "$.cdrData",
+                "IsPresent": true
+              }
+            },
+            {
+              "Not": {
+                "Variable": "$.error.cdr",
+                "IsPresent": true
+              }
+            }
+          ],
+          "Next": "FetchCDRData"
+        },
+        {
+          "And": [
+            {
+              "Variable": "$.datasources.basiq",
+              "BooleanEquals": true
+            },
+            {
+              "Not": {
+                "Variable": "$.basiqData",
+                "IsPresent": true
+              }
+            },
+            {
+              "Not": {
+                "Variable": "$.error.basiq",
+                "IsPresent": true
+              }
+            }
+          ],
+          "Next": "FetchBasiqData"
+        },
+        {
+          "And": [
+            {
+              "Variable": "$.datasources.yodlee",
+              "BooleanEquals": true
+            },
+            {
+              "Not": {
+                "Variable": "$.yodleeData",
+                "IsPresent": true
+              }
+            },
+            {
+              "Not": {
+                "Variable": "$.error.yodlee",
+                "IsPresent": true
+              }
+            }
+          ],
+          "Next": "FetchYodleeData"
+        },
+        {
+          "And": [
+            {
+              "Variable": "$.datasources.illion",
+              "BooleanEquals": true
+            },
+            {
+              "Not": {
+                "Variable": "$.illionData",
+                "IsPresent": true
+              }
+            },
+            {
+              "Not": {
+                "Variable": "$.error.illion",
+                "IsPresent": true
+              }
+            }
+          ],
+          "Next": "FetchIllionData"
+        }
+      ],
+      "Default": "MergeData"
+    },
+    "MergeData": {
+      "Type": "Task",
+      "Resource": "${MergeFinancialDataLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId",
+        "cdrData.$": "$.cdrData",
+        "basiqData.$": "$.basiqData",
+        "yodleeData.$": "$.yodleeData",
+        "illionData.$": "$.illionData",
+        "errors.$": "$.error"
+      },
+      "ResultPath": "$.mergedData",
+      "Next": "CheckErrors",
+      "Retry": [
+        {
+          "ErrorEquals": ["ServiceUnavailable", "ThrottlingException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 1.5
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["MergeError"],
+          "ResultPath": "$.error.merge",
+          "Next": "HandleAggregationError"
+        }
+      ]
+    },
+    "CheckErrors": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.error",
+          "IsPresent": true,
+          "Next": "GeneratePartialResults"
+        }
+      ],
+      "Default": "GenerateResults"
+    },
+    "GeneratePartialResults": {
+      "Type": "Task",
+      "Resource": "${GeneratePartialResultsLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId",
+        "mergedData.$": "$.mergedData",
+        "errors.$": "$.error"
+      },
+      "ResultPath": "$.result",
+      "Next": "NotifyPartialSuccess",
+      "Catch": [
+        {
+          "ErrorEquals": ["ResultGenerationError"],
+          "ResultPath": "$.error.results",
+          "Next": "HandleAggregationError"
+        }
+      ]
+    },
+    "GenerateResults": {
+      "Type": "Task",
+      "Resource": "${GenerateResultsLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId",
+        "mergedData.$": "$.mergedData"
+      },
+      "ResultPath": "$.result",
+      "Next": "NotifySuccess",
+      "Catch": [
+        {
+          "ErrorEquals": ["ResultGenerationError"],
+          "ResultPath": "$.error.results",
+          "Next": "HandleAggregationError"
+        }
+      ]
+    },
+    "NotifySuccess": {
+      "Type": "Task",
+      "Resource": "${NotifySuccessLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId",
+        "email.$": "$.email",
+        "requestId.$": "$$.Execution.Id",
+        "timestamp.$": "$$.Execution.StartTime"
+      },
+      "End": true
+    },
+    "NotifyPartialSuccess": {
+      "Type": "Task",
+      "Resource": "${NotifyPartialSuccessLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId",
+        "email.$": "$.email",
+        "errors.$": "$.error",
+        "requestId.$": "$$.Execution.Id",
+        "timestamp.$": "$$.Execution.StartTime"
+      },
+      "End": true
+    },
+    "HandleAggregationError": {
+      "Type": "Task",
+      "Resource": "${HandleAggregationErrorLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId",
+        "error.$": "$.error",
+        "requestId.$": "$$.Execution.Id",
+        "timestamp.$": "$$.Execution.StartTime"
+      },
+      "Next": "NotifyFailure"
+    },
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "${NotifyFailureLambdaArn}",
+      "Parameters": {
+        "userId.$": "$.userId",
+        "email.$": "$.email",
+        "error.$": "$.error",
+        "requestId.$": "$$.Execution.Id",
+        "timestamp.$": "$$.Execution.StartTime"
+      },
+      "End": true
+    }
+  }
+}
